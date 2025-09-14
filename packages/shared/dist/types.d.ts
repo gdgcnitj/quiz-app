@@ -37,6 +37,7 @@ export interface UserResponse {
     selectedAnswer: number;
     isCorrect: boolean;
     responseTime: number;
+    score?: number;
     $createdAt: string;
 }
 export interface SubmitAnswerRequest {

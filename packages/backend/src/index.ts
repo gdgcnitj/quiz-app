@@ -11,6 +11,7 @@ import { logger } from './utils/logger';
 // Import routes
 import authRoutes from './routes/auth';
 import adminRoutes from './routes/admin';
+import quizRoutes from './routes/quiz';
 
 // Validate configuration
 validateConfig();
@@ -29,13 +30,15 @@ app.use(cors({
   credentials: true
 }));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
-});
-app.use(limiter);
+// Rate limiting (disabled in development)
+if (config.server.nodeEnv === 'production') {
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+    message: 'Too many requests from this IP, please try again later.'
+  });
+  app.use(limiter);
+}
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -49,22 +52,29 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/admin', adminRoutes);
-
-// Quiz endpoints
+// Quiz status endpoint (must be before the router)
 app.get('/api/quiz/current', (req, res) => {
   const quizState = socketService.getQuizState();
+  const responseData = {
+    isActive: !!quizState.currentSessionId,
+    currentSessionId: quizState.currentSessionId,
+    currentQuestionId: quizState.currentQuestionId,
+    questionStartTime: quizState.questionStartTime,
+    participantCount: quizState.participants.size
+  };
+  
+  // Debug logging
+  console.log('Quiz status requested:', responseData);
+  
   res.json({
     success: true,
-    data: {
-      isActive: !!quizState.currentSessionId,
-      currentQuestionId: quizState.currentQuestionId,
-      participantCount: quizState.participants.size
-    }
+    data: responseData
   });
 });
+
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/quiz', quizRoutes);
 
 // Start quiz endpoint (admin only)
 app.post('/api/admin/quiz/start', async (req, res) => {
@@ -113,9 +123,9 @@ const startServer = async () => {
     await appwriteService.initializeDatabase();
     
     server.listen(config.server.port, () => {
-      logger.info(`🚀 Server running on port ${config.server.port}`);
-      logger.info(`📊 Environment: ${config.server.nodeEnv}`);
-      logger.info(`🌐 CORS origins: ${config.cors.allowedOrigins.join(', ')}`);
+      logger.info(`Server running on port ${config.server.port}`);
+      logger.info(`Environment: ${config.server.nodeEnv}`);
+      logger.info(`CORS origins: ${config.cors.allowedOrigins.join(', ')}`);
     });
   } catch (error) {
     logger.error('Failed to start server:', error);

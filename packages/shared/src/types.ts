@@ -45,6 +45,7 @@ export interface UserResponse {
   selectedAnswer: number;
   isCorrect: boolean;
   responseTime: number;
+  score?: number; // Kahoot-style score based on speed and accuracy
   $createdAt: string;
 }
 

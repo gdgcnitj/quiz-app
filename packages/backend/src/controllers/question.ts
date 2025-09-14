@@ -15,7 +15,7 @@ export class QuestionController {
     try {
       const questions = await appwriteService.listDocuments(
         appwriteService.collections.questions,
-        [Query.equal('isActive', true)]
+        [] // Remove isActive filter temporarily
       );
 
       res.json(createSuccessResponse(questions.documents, 'Questions retrieved successfully'));
@@ -44,7 +44,7 @@ export class QuestionController {
         options,
         correctAnswer,
         timeLimit: timeLimit || 60,
-        isActive: true,
+        // isActive: true, // Remove temporarily
         createdBy: userId
       };
 

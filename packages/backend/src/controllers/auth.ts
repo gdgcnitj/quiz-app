@@ -13,7 +13,7 @@ import {
   RegisterRequest,
   AdminLoginRequest
 } from '@quiz-app/shared';
-import { ID } from 'node-appwrite';
+import { ID, Query } from 'node-appwrite';
 
 export class AuthController {
   async register(req: Request, res: Response) {
@@ -36,7 +36,7 @@ export class AuthController {
       // Check if user already exists
       const existingUsers = await appwriteService.listDocuments(
         appwriteService.collections.users,
-        [`equal("email", "${email}")`]
+        [Query.equal('email', email)]
       );
 
       if (existingUsers.documents.length > 0) {
@@ -89,7 +89,7 @@ export class AuthController {
       // Get user by email
       const users = await appwriteService.listDocuments(
         appwriteService.collections.users,
-        [`equal("email", "${email}")`]
+        [Query.equal('email', email)]
       );
 
       if (users.documents.length === 0) {
@@ -141,7 +141,7 @@ export class AuthController {
       // Get user by email
       const users = await appwriteService.listDocuments(
         appwriteService.collections.users,
-        [`equal("email", "${email}")`, `equal("role", "admin")`]
+        [Query.equal('email', email), Query.equal('role', 'admin')]
       );
 
       if (users.documents.length === 0) {

@@ -15,6 +15,11 @@ interface QuizState {
   currentSessionId: string | null;
   currentQuestionId: string | null;
   questionStartTime: Date | null;
+  questionTimeLimit: number | null;
+  questionTimer: NodeJS.Timeout | null;
+  questionIndex: number;
+  totalQuestions: number;
+  availableQuestions: any[];
   participants: Map<string, { userId: string; username: string; socketId: string }>;
 }
 
@@ -24,6 +29,11 @@ export class SocketService {
     currentSessionId: null,
     currentQuestionId: null,
     questionStartTime: null,
+    questionTimeLimit: null,
+    questionTimer: null,
+    questionIndex: 0,
+    totalQuestions: 0,
+    availableQuestions: [],
     participants: new Map()
   };
 
@@ -87,6 +97,32 @@ export class SocketService {
             return;
           }
 
+          // Check if there's an active question
+          if (!this.quizState.currentQuestionId || !this.quizState.questionStartTime) {
+            socket.emit('error', 'No active question');
+            return;
+          }
+
+          // Calculate response time
+          const responseTime = (Date.now() - this.quizState.questionStartTime.getTime()) / 1000;
+
+          // Check if response time is within allowed limit
+          if (this.quizState.questionTimeLimit && responseTime > this.quizState.questionTimeLimit) {
+            socket.emit('error', 'Response time exceeded question time limit');
+            return;
+          }
+
+          // Check if user already answered this question
+          const existingResponse = await appwriteService.listDocuments(
+            appwriteService.collections.responses,
+            [`userId:${participant.userId}`, `questionId:${this.quizState.currentQuestionId}`]
+          );
+
+          if (existingResponse.documents.length > 0) {
+            socket.emit('error', 'You have already answered this question');
+            return;
+          }
+
           // Get the question to check correct answer
           const question = await appwriteService.getDocument(
             appwriteService.collections.questions,
@@ -94,6 +130,21 @@ export class SocketService {
           );
 
           const isCorrect = data.selectedAnswer === (question as any).correctAnswer;
+
+          // Calculate Kahoot-style score (faster = more points)
+          let score = 0;
+          if (isCorrect) {
+            // Base score: 1000 points for correct answer
+            // Speed bonus: More points for faster answers
+            // Formula: 1000 * (1 - (responseTime / timeLimit) * 0.5)
+            // This gives 1000 points for instant answer, 500 points for answer at time limit
+            const timeLimit = this.quizState.questionTimeLimit || 30;
+            const speedMultiplier = 1 - (responseTime / timeLimit) * 0.5;
+            score = Math.round(1000 * Math.max(speedMultiplier, 0.5)); // Minimum 500 points for correct answer
+          } else {
+            // Wrong answer: 0 points (can be changed to negative if desired)
+            score = 0;
+          }
 
           // Save user response
           await appwriteService.createDocument(
@@ -104,7 +155,8 @@ export class SocketService {
               questionId: data.questionId,
               selectedAnswer: data.selectedAnswer,
               isCorrect,
-              responseTime: data.responseTime
+              responseTime: Math.round(responseTime * 1000), // Store in milliseconds
+              score
             },
             ID.unique()
           );
@@ -112,7 +164,15 @@ export class SocketService {
           // Update leaderboard
           await this.updateLeaderboard(participant.userId, participant.username);
 
-          logger.info(`Answer submitted by ${participant.username}: ${isCorrect ? 'correct' : 'incorrect'}`);
+          // Send response to user
+          (socket as any).emit('answer-result', {
+            isCorrect,
+            score,
+            responseTime,
+            message: isCorrect ? `Correct! +${score} points` : 'Incorrect answer'
+          });
+
+          logger.info(`Answer submitted by ${participant.username}: ${isCorrect ? 'correct' : 'incorrect'} (+${score} points)`);
 
         } catch (error) {
           logger.error('Submit answer error:', error);
@@ -168,27 +228,57 @@ export class SocketService {
 
   async startQuiz(adminId: string): Promise<void> {
     try {
+      // Check if there's already an active session in memory
+      if (this.quizState.currentSessionId) {
+        throw new Error('A quiz session is already active. Please end the current session first.');
+      }
+
+      // Load all available questions
+      const questions = await appwriteService.listDocuments(
+        appwriteService.collections.questions,
+        []
+      );
+
+      if (questions.documents.length === 0) {
+        throw new Error('No questions available to start quiz');
+      }
+
+      // Shuffle questions for randomness
+      const shuffledQuestions = [...questions.documents].sort(() => Math.random() - 0.5);
+
       // Create new quiz session
       const session = await appwriteService.createDocument(
         appwriteService.collections.sessions,
         {
           startTime: new Date().toISOString(),
-          isActive: true,
-          createdBy: adminId,
-          currentQuestionId: null
+          createdBy: adminId
         },
         ID.unique()
       );
 
+      // Initialize quiz state
       this.quizState.currentSessionId = session.$id;
+      this.quizState.availableQuestions = shuffledQuestions;
+      this.quizState.totalQuestions = shuffledQuestions.length;
+      this.quizState.questionIndex = 0;
+      this.quizState.currentQuestionId = null;
+      this.quizState.questionStartTime = null;
+      this.quizState.questionTimeLimit = null;
+      this.quizState.questionTimer = null;
       
-      // Notify all clients
-      this.io.to('quiz-room').emit('quiz-started', session as any);
+      // Notify all clients that quiz has started
+      this.io.to('quiz-room').emit('quiz-started', {
+        sessionId: session.$id,
+        totalQuestions: this.quizState.totalQuestions,
+        message: 'Quiz started! First question coming up...'
+      } as any);
+
+      // Wait 3 seconds before starting first question
+      setTimeout(() => {
+        this.moveToNextQuestion();
+      }, 3000);
       
-      // Start with first question
-      await this.moveToNextQuestion();
-      
-      logger.info(`Quiz started by admin: ${adminId}`);
+      logger.info(`Quiz started by admin: ${adminId} with ${this.quizState.totalQuestions} questions`);
     } catch (error) {
       logger.error('Start quiz error:', error);
       throw error;
@@ -201,38 +291,55 @@ export class SocketService {
         throw new Error('No active quiz session');
       }
 
-      // Get a random active question
-      const questions = await appwriteService.listDocuments(
-        appwriteService.collections.questions,
-        [Query.equal('isActive', true)]
-      );
-
-      if (questions.documents.length === 0) {
-        throw new Error('No questions available');
+      // Clear any existing timer
+      if (this.quizState.questionTimer) {
+        clearTimeout(this.quizState.questionTimer);
+        this.quizState.questionTimer = null;
       }
 
-      const randomQuestion = questions.documents[Math.floor(Math.random() * questions.documents.length)];
+      // Check if there are more questions
+      if (this.quizState.questionIndex >= this.quizState.availableQuestions.length) {
+        // Quiz is finished
+        await this.endQuiz();
+        return;
+      }
+
+      const currentQuestion = this.quizState.availableQuestions[this.quizState.questionIndex];
       
-      // Update session with new question
+      // Update quiz state
+      this.quizState.currentQuestionId = currentQuestion.$id;
+      this.quizState.questionStartTime = new Date();
+      this.quizState.questionTimeLimit = currentQuestion.timeLimit;
+
+      // Update session with current question
       await appwriteService.updateDocument(
         appwriteService.collections.sessions,
         this.quizState.currentSessionId,
-        { currentQuestionId: randomQuestion.$id }
+        { currentQuestionId: currentQuestion.$id }
       );
 
-      this.quizState.currentQuestionId = randomQuestion.$id;
-      this.quizState.questionStartTime = new Date();
-
       // Send question to all clients (without correct answer)
-      const { correctAnswer, ...questionForClient } = randomQuestion as any;
-      this.io.to('quiz-room').emit('new-question', questionForClient as any);
+      const { correctAnswer, ...questionForClient } = currentQuestion;
+      const questionPayload = {
+        ...questionForClient,
+        questionNumber: this.quizState.questionIndex + 1,
+        totalQuestions: this.quizState.totalQuestions,
+        timeLimit: currentQuestion.timeLimit,
+        startTime: this.quizState.questionStartTime.toISOString()
+      };
 
-      // Set timer for next question
-      setTimeout(() => {
+      this.io.to('quiz-room').emit('new-question', questionPayload as any);
+
+      logger.info(`Question ${this.quizState.questionIndex + 1}/${this.quizState.totalQuestions} sent: ${currentQuestion.text.substring(0, 50)}...`);
+
+      // Set timer for automatic progression to next question
+      this.quizState.questionTimer = setTimeout(() => {
         this.handleQuestionTimeout();
-      }, (randomQuestion as any).timeLimit * 1000);
+      }, currentQuestion.timeLimit * 1000);
 
-      logger.info(`New question sent: ${(randomQuestion as any).text.substring(0, 50)}...`);
+      // Increment question index for next call
+      this.quizState.questionIndex++;
+
     } catch (error) {
       logger.error('Move to next question error:', error);
       throw error;
@@ -241,36 +348,96 @@ export class SocketService {
 
   private handleQuestionTimeout(): void {
     if (this.quizState.currentQuestionId) {
-      this.io.to('quiz-room').emit('question-ended', this.quizState.currentQuestionId);
+      logger.info(`Question ${this.quizState.questionIndex}/${this.quizState.totalQuestions} time up!`);
       
-      // Auto-move to next question after a short delay
+      // Send question ended event with results
+      this.io.to('quiz-room').emit('question-ended', {
+        questionId: this.quizState.currentQuestionId,
+        questionNumber: this.quizState.questionIndex,
+        totalQuestions: this.quizState.totalQuestions
+      } as any);
+      
+      // Wait 5 seconds before moving to next question (time for leaderboard updates)
       setTimeout(() => {
         this.moveToNextQuestion().catch(error => {
           logger.error('Auto next question error:', error);
         });
-      }, 5000); // 5 second delay
+      }, 5000);
     }
+  }
+
+  private async endQuiz(): Promise<void> {
+    try {
+      if (!this.quizState.currentSessionId) {
+        return;
+      }
+
+      const sessionId = this.quizState.currentSessionId;
+      
+      // Get final leaderboard
+      const finalLeaderboard = await appwriteService.listDocuments(
+        appwriteService.collections.leaderboard,
+        [Query.equal('sessionId', sessionId)]
+      );
+
+      // Sort by score descending
+      const sortedLeaderboard = finalLeaderboard.documents.sort((a: any, b: any) => b.totalScore - a.totalScore);
+
+      // Notify all clients that quiz has ended
+      this.io.to('quiz-room').emit('quiz-ended', {
+        sessionId,
+        finalLeaderboard: sortedLeaderboard,
+        totalQuestions: this.quizState.totalQuestions,
+        message: 'Quiz completed! Thanks for participating!'
+      } as any);
+
+      // Clear quiz state
+      this.resetQuizState();
+
+      logger.info(`Quiz ${sessionId} completed with ${this.quizState.participants.size} participants`);
+    } catch (error) {
+      logger.error('End quiz error:', error);
+      throw error;
+    }
+  }
+
+  private resetQuizState(): void {
+    // Clear timer if exists
+    if (this.quizState.questionTimer) {
+      clearTimeout(this.quizState.questionTimer);
+    }
+
+    this.quizState = {
+      currentSessionId: null,
+      currentQuestionId: null,
+      questionStartTime: null,
+      questionTimeLimit: null,
+      questionTimer: null,
+      questionIndex: 0,
+      totalQuestions: 0,
+      availableQuestions: [],
+      participants: new Map()
+    };
   }
 
   async stopQuiz(): Promise<void> {
     try {
       if (this.quizState.currentSessionId) {
-        // Mark session as inactive
-        await appwriteService.updateDocument(
-          appwriteService.collections.sessions,
-          this.quizState.currentSessionId,
-          { isActive: false }
-        );
+        const sessionId = this.quizState.currentSessionId;
+        
+        // Notify all clients that quiz was stopped by admin
+        this.io.to('quiz-room').emit('quiz-ended', {
+          sessionId,
+          message: 'Quiz stopped by administrator',
+          wasForceEnded: true
+        } as any);
 
-        // Notify all clients
-        this.io.to('quiz-room').emit('quiz-ended', this.quizState.currentSessionId);
+        // Reset quiz state
+        this.resetQuizState();
 
-        // Reset state
-        this.quizState.currentSessionId = null;
-        this.quizState.currentQuestionId = null;
-        this.quizState.questionStartTime = null;
-
-        logger.info('Quiz stopped');
+        logger.info(`Quiz ${sessionId} stopped by admin`);
+      } else {
+        logger.info('No active quiz to stop');
       }
     } catch (error) {
       logger.error('Stop quiz error:', error);
@@ -293,8 +460,10 @@ export class SocketService {
 
       const correctAnswers = responses.documents.filter((r: any) => r.isCorrect).length;
       const totalQuestions = responses.documents.length;
-      const averageResponseTime = responses.documents.reduce((sum: number, r: any) => sum + r.responseTime, 0) / totalQuestions;
-      const totalScore = calculateScore(correctAnswers, totalQuestions, averageResponseTime);
+      const totalScore = responses.documents.reduce((sum: number, r: any) => sum + (r.score || 0), 0);
+      const averageResponseTime = totalQuestions > 0 
+        ? responses.documents.reduce((sum: number, r: any) => sum + (r.responseTime || 0), 0) / totalQuestions 
+        : 0;
 
       // Update or create leaderboard entry
       const existingEntries = await appwriteService.listDocuments(
@@ -313,6 +482,7 @@ export class SocketService {
           {
             totalScore,
             correctAnswers,
+            totalQuestions,
             averageResponseTime
           }
         );
@@ -326,6 +496,7 @@ export class SocketService {
             sessionId: this.quizState.currentSessionId,
             totalScore,
             correctAnswers,
+            totalQuestions,
             averageResponseTime
           },
           ID.unique()
