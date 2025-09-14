@@ -61,16 +61,16 @@ export class AuthController {
       );
 
       // Generate token
-      const token = authService.generateToken(userDoc);
+      const token = authService.generateToken(userDoc as any);
 
       logger.info(`User registered: ${email}`);
 
       res.status(201).json(createSuccessResponse({
         user: {
           $id: userDoc.$id,
-          username: userDoc.username,
-          email: userDoc.email,
-          role: userDoc.role,
+          username: (userDoc as any).username,
+          email: (userDoc as any).email,
+          role: (userDoc as any).role,
           $createdAt: userDoc.$createdAt
         },
         token
@@ -104,16 +104,16 @@ export class AuthController {
         // Note: In a real implementation, you'd verify the password against Appwrite
         // For now, we'll use a simple check
         
-        const token = authService.generateToken(user);
+        const token = authService.generateToken(user as any);
 
         logger.info(`User logged in: ${email}`);
 
         res.json(createSuccessResponse({
           user: {
             $id: user.$id,
-            username: user.username,
-            email: user.email,
-            role: user.role,
+            username: (user as any).username,
+            email: (user as any).email,
+            role: (user as any).role,
             $createdAt: user.$createdAt
           },
           token
@@ -154,16 +154,16 @@ export class AuthController {
       try {
         const appwriteUser = await appwriteService.getUser(user.$id);
         
-        const token = authService.generateToken(user);
+        const token = authService.generateToken(user as any);
 
         logger.info(`Admin logged in: ${email}`);
 
         res.json(createSuccessResponse({
           user: {
             $id: user.$id,
-            username: user.username,
-            email: user.email,
-            role: user.role,
+            username: (user as any).username,
+            email: (user as any).email,
+            role: (user as any).role,
             $createdAt: user.$createdAt
           },
           token
@@ -196,9 +196,9 @@ export class AuthController {
       res.json(createSuccessResponse({
         user: {
           $id: user.$id,
-          username: user.username,
-          email: user.email,
-          role: user.role,
+          username: (user as any).username,
+          email: (user as any).email,
+          role: (user as any).role,
           $createdAt: user.$createdAt
         }
       }, 'Token verified'));

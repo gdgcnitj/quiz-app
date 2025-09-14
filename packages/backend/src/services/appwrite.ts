@@ -174,15 +174,53 @@ class AppwriteService {
 
         // Add attributes
         for (const attr of collection.attributes) {
-          await this.databases.createStringAttribute(
-            config.appwrite.databaseId,
-            collection.id,
-            attr.key,
-            attr.size || 255,
-            attr.required || false,
-            attr.default,
-            attr.array || false
-          );
+          try {
+            if (attr.type === 'string') {
+              await this.databases.createStringAttribute(
+                config.appwrite.databaseId,
+                collection.id,
+                attr.key,
+                attr.size || 255,
+                attr.required || false,
+                attr.default as string | undefined,
+                (attr as any).array || false
+              );
+            } else if (attr.type === 'integer') {
+              await this.databases.createIntegerAttribute(
+                config.appwrite.databaseId,
+                collection.id,
+                attr.key,
+                attr.required || false,
+                attr.default as number | undefined
+              );
+            } else if (attr.type === 'float') {
+              await this.databases.createFloatAttribute(
+                config.appwrite.databaseId,
+                collection.id,
+                attr.key,
+                attr.required || false,
+                attr.default as number | undefined
+              );
+            } else if (attr.type === 'boolean') {
+              await this.databases.createBooleanAttribute(
+                config.appwrite.databaseId,
+                collection.id,
+                attr.key,
+                attr.required || false,
+                attr.default as boolean | undefined
+              );
+            } else if (attr.type === 'datetime') {
+              await this.databases.createDatetimeAttribute(
+                config.appwrite.databaseId,
+                collection.id,
+                attr.key,
+                attr.required || false,
+                attr.default as string | undefined
+              );
+            }
+          } catch (attrError) {
+            console.log(`Attribute ${attr.key} already exists or failed to create:`, attrError);
+          }
         }
       }
     }

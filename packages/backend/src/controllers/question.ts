@@ -79,7 +79,7 @@ export class QuestionController {
         id
       );
 
-      if (existingQuestion.createdBy !== userId) {
+      if ((existingQuestion as any).createdBy !== userId) {
         return res.status(403).json(createErrorResponse('Not authorized to update this question'));
       }
 
@@ -125,7 +125,7 @@ export class QuestionController {
         id
       );
 
-      if (existingQuestion.createdBy !== userId) {
+      if ((existingQuestion as any).createdBy !== userId) {
         return res.status(403).json(createErrorResponse('Not authorized to delete this question'));
       }
 
@@ -152,7 +152,7 @@ export class QuestionController {
         id
       );
 
-      if (!question.isActive) {
+      if (!(question as any).isActive) {
         return res.status(404).json(createErrorResponse('Question not found'));
       }
 

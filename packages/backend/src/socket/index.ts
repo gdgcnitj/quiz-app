@@ -52,12 +52,12 @@ export class SocketService {
 
           this.quizState.participants.set(userId, {
             userId,
-            username: user.username,
+            username: (user as any).username,
             socketId: socket.id
           });
 
           socket.join('quiz-room');
-          logger.info(`User ${user.username} joined quiz`);
+          logger.info(`User ${(user as any).username} joined quiz`);
 
           // Send current quiz state if active
           if (this.quizState.currentSessionId && this.quizState.currentQuestionId) {
@@ -67,8 +67,8 @@ export class SocketService {
             );
 
             // Send question without correct answer
-            const { correctAnswer, ...questionForClient } = question;
-            socket.emit('new-question', questionForClient);
+            const { correctAnswer, ...questionForClient } = question as any;
+            socket.emit('new-question', questionForClient as any);
           }
 
         } catch (error) {
@@ -93,7 +93,7 @@ export class SocketService {
             data.questionId
           );
 
-          const isCorrect = data.selectedAnswer === question.correctAnswer;
+          const isCorrect = data.selectedAnswer === (question as any).correctAnswer;
 
           // Save user response
           await appwriteService.createDocument(
@@ -127,13 +127,13 @@ export class SocketService {
             adminId
           );
 
-          if (admin.role !== 'admin') {
+          if ((admin as any).role !== 'admin') {
             socket.emit('error', 'Admin access required');
             return;
           }
 
           socket.join('admin-room');
-          logger.info(`Admin ${admin.username} joined`);
+          logger.info(`Admin ${(admin as any).username} joined`);
 
         } catch (error) {
           logger.error('Admin join error:', error);
@@ -183,7 +183,7 @@ export class SocketService {
       this.quizState.currentSessionId = session.$id;
       
       // Notify all clients
-      this.io.to('quiz-room').emit('quiz-started', session);
+      this.io.to('quiz-room').emit('quiz-started', session as any);
       
       // Start with first question
       await this.moveToNextQuestion();
@@ -224,15 +224,15 @@ export class SocketService {
       this.quizState.questionStartTime = new Date();
 
       // Send question to all clients (without correct answer)
-      const { correctAnswer, ...questionForClient } = randomQuestion;
-      this.io.to('quiz-room').emit('new-question', questionForClient);
+      const { correctAnswer, ...questionForClient } = randomQuestion as any;
+      this.io.to('quiz-room').emit('new-question', questionForClient as any);
 
       // Set timer for next question
       setTimeout(() => {
         this.handleQuestionTimeout();
-      }, randomQuestion.timeLimit * 1000);
+      }, (randomQuestion as any).timeLimit * 1000);
 
-      logger.info(`New question sent: ${randomQuestion.text.substring(0, 50)}...`);
+      logger.info(`New question sent: ${(randomQuestion as any).text.substring(0, 50)}...`);
     } catch (error) {
       logger.error('Move to next question error:', error);
       throw error;
@@ -291,9 +291,9 @@ export class SocketService {
         ]
       );
 
-      const correctAnswers = responses.documents.filter(r => r.isCorrect).length;
+      const correctAnswers = responses.documents.filter((r: any) => r.isCorrect).length;
       const totalQuestions = responses.documents.length;
-      const averageResponseTime = responses.documents.reduce((sum, r) => sum + r.responseTime, 0) / totalQuestions;
+      const averageResponseTime = responses.documents.reduce((sum: number, r: any) => sum + r.responseTime, 0) / totalQuestions;
       const totalScore = calculateScore(correctAnswers, totalQuestions, averageResponseTime);
 
       // Update or create leaderboard entry
@@ -342,7 +342,7 @@ export class SocketService {
         ]
       );
 
-      this.io.to('quiz-room').emit('leaderboard-update', leaderboard.documents);
+      this.io.to('quiz-room').emit('leaderboard-update', leaderboard.documents as any);
 
     } catch (error) {
       logger.error('Update leaderboard error:', error);

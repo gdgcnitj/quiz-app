@@ -1,10 +1,9 @@
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 import { config } from '../config';
-import { User } from '@quiz-app/shared';
 
 export class AuthService {
-  generateToken(user: User): string {
+  generateToken(user: any): string {
     return jwt.sign(
       { 
         userId: user.$id, 
