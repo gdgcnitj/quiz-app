@@ -1,0 +1,13 @@
+{
+  "version": "7.4.2",
+  "npmClient": "npm",
+  "packages": [
+    "packages/*"
+  ],
+  "command": {
+    "version": {
+      "allowBranch": ["main", "master"],
+      "conventionalCommits": true
+    }
+  }
+}
